@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ActionCollection version="2" name="Scripts">
+    <Actions category="Scripts">
+        <text>RefLayer</text>
+
+        <Action name="RefLayer_NextImage">
+          <icon></icon>
+          <text>Next Image</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
+        <Action name="RefLayer_PrevImage">
+          <icon></icon>
+          <text>Prev Image</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
+        <Action name="RefLayer_Visible">
+          <icon></icon>
+          <text>Visible Toggle</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
+    </Actions>
+</ActionCollection>
