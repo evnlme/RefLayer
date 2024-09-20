@@ -1,6 +1,9 @@
 """
 TODO: Case where user deletes or changes the RefLayer node.
 TODO: Case where multiple instances, windows, or documents are used.
+Later:
+>>> img = QImage('W:\\Media\\Images\\genshinCharacter\\Furina_Profile.webp')
+>>> QApplication.instance().clipboard().setImage(img)
 """
 import random
 from dataclasses import dataclass
@@ -110,8 +113,7 @@ class RefLayerWidget(K.QWidget):
         self._configureExtension()
 
     def _handleActiveViewChanged(self) -> None:
-        doc = self._instance.activeDocument()
-        refLayer = self._getRefLayer() if doc else None
+        refLayer = self._getRefLayer()
         if refLayer:
             path = Path(refLayer.path())
             refLayer = self._updateRefLayer(path)
@@ -171,7 +173,8 @@ class RefLayerWidget(K.QWidget):
         mainLayout.addWidget(marginWidget)
 
     def _getRefLayer(self) -> Optional[K.Node]:
-        return self._instance.activeDocument().nodeByName('##RefLayer')
+        doc = self._instance.activeDocument()
+        return doc.nodeByName('##RefLayer') if doc else None
 
     def _updateRefLayer(self, path: Path) -> K.Node:
         self._fileText.setText(str(path))
@@ -189,7 +192,8 @@ class RefLayerWidget(K.QWidget):
         return refLayer
 
     def _getTransformMask(self) -> Optional[K.Node]:
-        return self._instance.activeDocument().nodeByName('##RefLayer#Transform')
+        doc = self._instance.activeDocument()
+        return doc.nodeByName('##RefLayer#Transform') if doc else None
 
     def _updateTransformMask(self, refLayer: K.Node) -> K.Node:
         doc = self._instance.activeDocument()
@@ -209,7 +213,7 @@ class RefLayerWidget(K.QWidget):
         return transformMask
 
     def _handleFileButtonClick(self):
-        if self._fileDialog.exec():
+        if self._instance.activeDocument() and self._fileDialog.exec():
             files = self._fileDialog.selectedFiles()
             path = Path(files[0])
             refLayer = self._updateRefLayer(path)
@@ -221,7 +225,6 @@ class RefLayerWidget(K.QWidget):
         self._fileButton.clicked.connect(self._handleFileButtonClick)
 
     def _nextImage(self, fn) -> None:
-        doc = self._instance.activeDocument()
         refLayer = self._getRefLayer()
         if refLayer is None:
             return
@@ -252,6 +255,7 @@ class RefLayerWidget(K.QWidget):
             isVisible = not refLayer.visible()
             refLayer.setVisible(isVisible)
             self._visibleButton.setIcon(self._instance.icon('visible' if isVisible else 'novisible'))
+            # Document must exist since refLayer exists.
             self._instance.activeDocument().refreshProjection()
 
     def _configureVisible(self) -> None:
