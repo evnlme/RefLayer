@@ -9,7 +9,7 @@ import random
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import krita as K
 
@@ -64,15 +64,44 @@ def computeTransform(
         container: K.QRect,
         img: K.QRect,
         alignment: Alignment = Alignment.CENTER,
+        imageScale: float = 1.0,
+        scaleToFit: bool = True,
         ) -> TransformParams:
     wc, hc = container.width(), container.height()
-    wi, hi = img.width(), img.height()
-    s = min(wc/wi, hc/hi, 1.0)
+    wi, hi = img.width()*imageScale, img.height()*imageScale
+    s = min(wc/wi, hc/hi, 1.0) if scaleToFit else 1.0
     x0 = img.x()
     y0 = img.y()
     dx = container.x() + (wc - wi*s)*(alignment % 3)/2
     dy = container.y() + (hc - hi*s)*(alignment // 3)/2
-    return TransformParams(x0, y0, dx, dy, s)
+    return TransformParams(x0, y0, dx, dy, s*imageScale)
+
+class LabelNumberUnit(K.QWidget):
+    def __init__(self, label: str, units: List[str], includeLock: bool = False) -> None:
+        super().__init__()
+        layout = K.QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.label =  K.QLabel(label)
+        self.label.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self.number = K.QSpinBox()
+        self.unit = K.QComboBox()
+        self.unit.addItems(units)
+        if len(units) == 1:
+            self.unit.setEnabled(False)
+        self.unit.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self.setLayout(layout)
+        layout.addWidget(self.label)
+        layout.addWidget(self.number)
+        layout.addWidget(self.unit)
+        layout.setSpacing(3)
+
+def matchWidths(widgets: List[K.QWidget]) -> None:
+    """Find max width and set all widths to it."""
+    width = 0
+    for widget in widgets:
+        width = max(width, widget.sizeHint().width())
+    for widget in widgets:
+        widget.setFixedWidth(width)
 
 class RefLayerWidget(K.QWidget):
     validImageExt = [
@@ -88,6 +117,8 @@ class RefLayerWidget(K.QWidget):
         # State
         self._alignment = Alignment.CENTER
         self._margins = [0, 0, 0, 0]
+        self._imageScale = 1.0
+        self._scaleToFit = True
         # Krita state
         self._instance = K.Krita.instance()
         self._notifier = self._instance.notifier()
@@ -100,8 +131,12 @@ class RefLayerWidget(K.QWidget):
         self._prevButton = K.QPushButton('Prev Image')
         self._visibleButton = K.QPushButton()
         self._alignmentButtons = [K.QCheckBox() for _ in range(9)]
-        self._marginTextInputs = [K.QSpinBox() for _ in range(4)]
-        self._marginButton = K.QPushButton('Apply')
+        self._marginTextInputs = [
+            LabelNumberUnit(label, ['px'])
+            for label in ['Top:', 'Left:', 'Bottom:', 'Right:']]
+        self._scaleTextInput = LabelNumberUnit('Scale:', ['%'])
+        self._scaleToFitCheckBox = K.QCheckBox('Scale down to fit.')
+        self._scaleText = K.QLabel('Current Scale: 100%')
         # Configuration
         self._configureNotifier()
         self._configureLayout()
@@ -110,14 +145,13 @@ class RefLayerWidget(K.QWidget):
         self._configureVisible()
         self._configureAlignment()
         self._configureMargin()
+        self._configureScale()
         self._configureExtension()
 
     def _handleActiveViewChanged(self) -> None:
         refLayer = self._getRefLayer()
         if refLayer:
-            path = Path(refLayer.path())
-            refLayer = self._updateRefLayer(path)
-            self._updateTransformMask(refLayer)
+            self._fileText.setText(refLayer.path())
             isVisible = refLayer.visible()
             self._visibleButton.setIcon(self._instance.icon('visible' if isVisible else 'novisible'))
         else:
@@ -133,7 +167,16 @@ class RefLayerWidget(K.QWidget):
     def _configureLayout(self) -> None:
         mainLayout = K.QVBoxLayout()
         mainLayout.setAlignment(K.Qt.AlignTop)
-        self.setLayout(mainLayout)
+        mainWidget = K.QWidget()
+        mainWidget.setLayout(mainLayout)
+
+        scrollArea = K.QScrollArea()
+        scrollArea.setWidget(mainWidget)
+        scrollArea.setWidgetResizable(True)
+        scrollLayout = K.QVBoxLayout()
+        scrollLayout.setAlignment(K.Qt.AlignTop)
+        scrollLayout.addWidget(scrollArea)
+        self.setLayout(scrollLayout)
 
         fileLayout = K.QHBoxLayout()
         fileLayout.setContentsMargins(0, 0, 0, 0)
@@ -156,21 +199,40 @@ class RefLayerWidget(K.QWidget):
         navLayout.addWidget(self._visibleButton)
         mainLayout.addWidget(navWidget)
 
+        tabWidget = K.QTabWidget()
+        mainLayout.addWidget(tabWidget)
+
+        alignLayout = K.QVBoxLayout()
+        alignLayout.setAlignment(K.Qt.AlignTop)
+        alignWidget = K.QWidget()
+        alignWidget.setLayout(alignLayout)
         gridLayout = K.QGridLayout()
         gridLayout.setAlignment(K.Qt.AlignCenter)
-        gridWidget = K.QGroupBox('Alignment')
+        gridWidget = K.QWidget()
         gridWidget.setLayout(gridLayout)
         for i, button in enumerate(self._alignmentButtons):
             gridLayout.addWidget(button, i // 3, i % 3)
-        mainLayout.addWidget(gridWidget)
+        alignLayout.addWidget(gridWidget)
+        tabWidget.addTab(alignWidget, 'Alignment')
 
         marginLayout = K.QGridLayout()
-        marginWidget = K.QGroupBox('Margins')
+        marginLayout.setAlignment(K.Qt.AlignTop)
+        marginWidget = K.QWidget()
         marginWidget.setLayout(marginLayout)
         for i, widget in enumerate(self._marginTextInputs):
             marginLayout.addWidget(widget, i // 2, i % 2)
-        marginLayout.addWidget(self._marginButton, 2, 0, 1, 2)
-        mainLayout.addWidget(marginWidget)
+        matchWidths([widget.label for widget in self._marginTextInputs[0::2]])
+        matchWidths([widget.label for widget in self._marginTextInputs[1::2]])
+        tabWidget.addTab(marginWidget, 'Margins')
+
+        scaleLayout = K.QVBoxLayout()
+        scaleLayout.setAlignment(K.Qt.AlignTop)
+        scaleWidget = K.QWidget()
+        scaleWidget.setLayout(scaleLayout)
+        scaleLayout.addWidget(self._scaleTextInput)
+        scaleLayout.addWidget(self._scaleToFitCheckBox)
+        scaleLayout.addWidget(self._scaleText)
+        tabWidget.addTab(scaleWidget, 'Scale')
 
     def _getRefLayer(self) -> Optional[K.Node]:
         doc = self._instance.activeDocument()
@@ -207,8 +269,14 @@ class RefLayerWidget(K.QWidget):
         if transformMask is None:
             transformMask = doc.createTransformMask('##RefLayer#Transform')
             refLayer.addChildNode(transformMask, None)
-        transform = computeTransform(container, refLayer.bounds(), self._alignment)
+        transform = computeTransform(
+            container,
+            refLayer.bounds(),
+            self._alignment,
+            self._imageScale,
+            self._scaleToFit)
         transformMask.fromXML(transform.xml())
+        self._scaleText.setText(f'Current Scale: {transform.s*100:.3g}%')
         doc.refreshProjection()
         return transformMask
 
@@ -276,22 +344,33 @@ class RefLayerWidget(K.QWidget):
             button.setChecked(i == Alignment.CENTER)
             button.clicked.connect(self._handleAlignmentButtonClick(i))
 
-    def _handleMarginButtonClick(self) -> None:
-        self._margins = [m.value() for m in self._marginTextInputs]
+    def _handleTransformChange(self) -> None:
+        self._margins = [m.number.value() for m in self._marginTextInputs]
+        self._imageScale = self._scaleTextInput.number.value() / 100
+        self._scaleToFit = self._scaleToFitCheckBox.isChecked()
         refLayer = self._getRefLayer()
         if refLayer:
             self._updateTransformMask(refLayer)
-        self._marginButton.setEnabled(False)
 
     def _configureMargin(self) -> None:
         labels = ['Top', 'Left', 'Bottom', 'Right']
         for widget, label in zip(self._marginTextInputs, labels):
-            widget.setPrefix(label + ': ')
-            widget.setValue(0)
-            widget.setRange(0, 10000)
-            widget.valueChanged.connect(lambda _: self._marginButton.setEnabled(True))
-        self._marginButton.setEnabled(False)
-        self._marginButton.clicked.connect(self._handleMarginButtonClick)
+            #widget.setPrefix(label + ': ')
+            #widget.setSuffix(' px')
+            widget.number.setRange(0, 10000)
+            widget.number.setValue(0)
+            line = widget.number.lineEdit()
+            line.editingFinished.connect(self._handleTransformChange)
+            line.returnPressed.connect(self._handleTransformChange)
+
+    def _configureScale(self) -> None:
+        self._scaleTextInput.number.setRange(1, 1000)
+        self._scaleTextInput.number.setValue(100)
+        line = self._scaleTextInput.number.lineEdit()
+        line.editingFinished.connect(self._handleTransformChange)
+        line.returnPressed.connect(self._handleTransformChange)
+        self._scaleToFitCheckBox.setChecked(True)
+        self._scaleToFitCheckBox.clicked.connect(self._handleTransformChange)
 
     def _configureExtension(self) -> None:
         ext = RefLayerExt(self._instance, self)
