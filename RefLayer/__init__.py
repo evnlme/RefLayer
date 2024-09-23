@@ -1,6 +1,7 @@
 """
 TODO: Case where user deletes or changes the RefLayer node.
 TODO: Case where multiple instances, windows, or documents are used.
+TODO: Initialize container width and height in Margins.
 Later:
 >>> img = QImage('W:\\Media\\Images\\genshinCharacter\\Furina_Profile.webp')
 >>> QApplication.instance().clipboard().setImage(img)
@@ -107,6 +108,11 @@ class LabelNumberUnit(K.QWidget):
         inst = K.Krita.instance()
         self.lock.setIcon(inst.icon('locked' if self.isLocked else 'unlocked'))
 
+    def setValue(self, v: int) -> None:
+        self.number.blockSignals(True)
+        self.number.setValue(v)
+        self.number.blockSignals(False)
+
 def matchWidths(widgets: List[K.QWidget]) -> None:
     """Find max width and set all widths to it."""
     width = 0
@@ -143,6 +149,7 @@ class RefLayerWidget(K.QWidget):
         self._prevButton = K.QPushButton('Prev Image')
         self._visibleButton = K.QPushButton()
         self._alignmentButtons = [K.QCheckBox() for _ in range(9)]
+        self._marginFromLayerButton = K.QPushButton('Margins from Active Layer.')
         self._marginInputs = [
             LabelNumberUnit(label, ['px'])
             for label in ['Left:', 'Right:', 'Top:', 'Bottom:']]
@@ -233,6 +240,7 @@ class RefLayerWidget(K.QWidget):
         marginLayout.setAlignment(K.Qt.AlignTop)
         marginWidget = K.QWidget()
         marginWidget.setLayout(marginLayout)
+        marginLayout.addWidget(self._marginFromLayerButton)
         for marginInput in self._marginInputs:
             marginLayout.addWidget(marginInput)
         matchWidths([m.label for m in self._marginInputs])
@@ -292,7 +300,7 @@ class RefLayerWidget(K.QWidget):
             self._imageScale,
             self._scaleToFit)
         transformMask.fromXML(transform.xml())
-        self._scaleText.setText(f'Current Scale: {transform.s*100:.3g}%')
+        self._scaleText.setText(f'Current Image Scale: {transform.s*100:.3g}%')
         doc.refreshProjection()
         return transformMask
 
@@ -375,11 +383,6 @@ class RefLayerWidget(K.QWidget):
             center: LabelNumberUnit,
             getTotalSize: Callable[[], Optional[int]],
             ) -> Callable[[], None]:
-        def _setValue(lnu: LabelNumberUnit, v: int) -> None:
-            lnu.number.blockSignals(True)
-            lnu.number.setValue(v)
-            lnu.number.blockSignals(False)
-
         def _handle() -> None:
             s = getTotalSize()
             if s is None:
@@ -388,14 +391,14 @@ class RefLayerWidget(K.QWidget):
             r = right.number.value()
             c = center.number.value()
             if center.isLocked:
-                _setValue(right, s - l - c)
+                right.setValue(s - l - c)
             else:
                 co = s - l - r
                 if co >= 0:
-                    _setValue(center, co)
+                    center.setValue(co)
                 else:
-                    _setValue(center, 0)
-                    _setValue(left, s - r)
+                    center.setValue(0)
+                    left.setValue(s - r)
         return _handle
 
     def _handleCenterChange(
@@ -405,24 +408,40 @@ class RefLayerWidget(K.QWidget):
             center: LabelNumberUnit,
             getTotalSize: Callable[[], Optional[int]],
             ) -> Callable[[], None]:
-        def _setValue(lnu: LabelNumberUnit, v: int) -> None:
-            lnu.number.blockSignals(True)
-            lnu.number.setValue(v)
-            lnu.number.blockSignals(False)
-
         def _handle() -> None:
             s = getTotalSize()
             if s is None:
                 return
             l = left.number.value()
             c = center.number.value()
-            _setValue(right, s - l - c)
+            right.setValue(s - l - c)
         return _handle
 
+    def _handleMarginFromLayer(self) -> None:
+        doc = self._instance.activeDocument()
+        if doc is None:
+            return
+        activeNode = doc.activeNode()
+        docRect = doc.bounds()
+        rect = activeNode.bounds()
+        self._margins = [
+            rect.left() - docRect.left(),
+            docRect.right() - rect.right(),
+            rect.top() - docRect.top(),
+            docRect.bottom() - rect.bottom(),
+        ]
+        for v, widget in zip(self._margins, self._marginInputs):
+            widget.setValue(v)
+        self._containerWidth.setValue(rect.width())
+        self._containerHeight.setValue(rect.height())
+        self._handleTransformChange()
+
     def _configureMargin(self) -> None:
+        self._marginFromLayerButton.clicked.connect(self._handleMarginFromLayer)
         for widget in self._marginInputs:
             widget.number.setRange(-10000, 10000)
             widget.number.setValue(0)
+        for widget in (self._marginInputs + [self._containerWidth, self._containerHeight]):
             line = widget.number.lineEdit()
             line.editingFinished.connect(self._handleTransformChange)
             line.returnPressed.connect(self._handleTransformChange)
