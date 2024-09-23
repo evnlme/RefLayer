@@ -81,6 +81,7 @@ class LabelNumberUnit(K.QWidget):
         super().__init__()
         layout = K.QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
         self.label =  K.QLabel(label)
         self.label.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
         self.number = K.QSpinBox()
@@ -93,7 +94,18 @@ class LabelNumberUnit(K.QWidget):
         layout.addWidget(self.label)
         layout.addWidget(self.number)
         layout.addWidget(self.unit)
-        layout.setSpacing(3)
+        if includeLock:
+            self.isLocked = False
+            self.lock = K.QPushButton()
+            self.lock.setIcon(K.Krita.instance().icon('unlocked'))
+            self.lock.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+            self.lock.clicked.connect(self._toggleLock)
+            layout.addWidget(self.lock)
+
+    def _toggleLock(self):
+        self.isLocked = not self.isLocked
+        inst = K.Krita.instance()
+        self.lock.setIcon(inst.icon('locked' if self.isLocked else 'unlocked'))
 
 def matchWidths(widgets: List[K.QWidget]) -> None:
     """Find max width and set all widths to it."""
@@ -131,12 +143,14 @@ class RefLayerWidget(K.QWidget):
         self._prevButton = K.QPushButton('Prev Image')
         self._visibleButton = K.QPushButton()
         self._alignmentButtons = [K.QCheckBox() for _ in range(9)]
-        self._marginTextInputs = [
+        self._marginInputs = [
             LabelNumberUnit(label, ['px'])
-            for label in ['Top:', 'Left:', 'Bottom:', 'Right:']]
-        self._scaleTextInput = LabelNumberUnit('Scale:', ['%'])
-        self._scaleToFitCheckBox = K.QCheckBox('Scale down to fit.')
-        self._scaleText = K.QLabel('Current Scale: 100%')
+            for label in ['Left:', 'Right:', 'Top:', 'Bottom:']]
+        self._containerWidth = LabelNumberUnit('Container Width:', ['px'], True)
+        self._containerHeight = LabelNumberUnit('Container Height:', ['px'], True)
+        self._scaleTextInput = LabelNumberUnit('Image Scale:', ['%'])
+        self._scaleToFitCheckBox = K.QCheckBox('Scale image down to fit.')
+        self._scaleText = K.QLabel('Current Image Scale: 100%')
         # Configuration
         self._configureNotifier()
         self._configureLayout()
@@ -215,14 +229,16 @@ class RefLayerWidget(K.QWidget):
         alignLayout.addWidget(gridWidget)
         tabWidget.addTab(alignWidget, 'Alignment')
 
-        marginLayout = K.QGridLayout()
+        marginLayout = K.QVBoxLayout()
         marginLayout.setAlignment(K.Qt.AlignTop)
         marginWidget = K.QWidget()
         marginWidget.setLayout(marginLayout)
-        for i, widget in enumerate(self._marginTextInputs):
-            marginLayout.addWidget(widget, i // 2, i % 2)
-        matchWidths([widget.label for widget in self._marginTextInputs[0::2]])
-        matchWidths([widget.label for widget in self._marginTextInputs[1::2]])
+        for marginInput in self._marginInputs:
+            marginLayout.addWidget(marginInput)
+        matchWidths([m.label for m in self._marginInputs])
+        marginLayout.addWidget(self._containerWidth)
+        marginLayout.addWidget(self._containerHeight)
+        matchWidths([self._containerWidth.label, self._containerHeight.label])
         tabWidget.addTab(marginWidget, 'Margins')
 
         scaleLayout = K.QVBoxLayout()
@@ -261,10 +277,10 @@ class RefLayerWidget(K.QWidget):
         doc = self._instance.activeDocument()
         docRect = doc.bounds()
         container = K.QRect(
-            docRect.x() + self._margins[1],
-            docRect.y() + self._margins[0],
-            docRect.width() - self._margins[1] - self._margins[3],
-            docRect.height() - self._margins[0] - self._margins[2])
+            docRect.x() + self._margins[0],
+            docRect.y() + self._margins[2],
+            docRect.width() - self._margins[0] - self._margins[1],
+            docRect.height() - self._margins[2] - self._margins[3])
         transformMask = self._getTransformMask()
         if transformMask is None:
             transformMask = doc.createTransformMask('##RefLayer#Transform')
@@ -345,23 +361,97 @@ class RefLayerWidget(K.QWidget):
             button.clicked.connect(self._handleAlignmentButtonClick(i))
 
     def _handleTransformChange(self) -> None:
-        self._margins = [m.number.value() for m in self._marginTextInputs]
+        self._margins = [m.number.value() for m in self._marginInputs]
         self._imageScale = self._scaleTextInput.number.value() / 100
         self._scaleToFit = self._scaleToFitCheckBox.isChecked()
         refLayer = self._getRefLayer()
         if refLayer:
             self._updateTransformMask(refLayer)
 
+    def _handleEdgeChange(
+            self,
+            left: LabelNumberUnit,
+            right: LabelNumberUnit,
+            center: LabelNumberUnit,
+            getTotalSize: Callable[[], Optional[int]],
+            ) -> Callable[[], None]:
+        def _setValue(lnu: LabelNumberUnit, v: int) -> None:
+            lnu.number.blockSignals(True)
+            lnu.number.setValue(v)
+            lnu.number.blockSignals(False)
+
+        def _handle() -> None:
+            s = getTotalSize()
+            if s is None:
+                return
+            l = left.number.value()
+            r = right.number.value()
+            c = center.number.value()
+            if center.isLocked:
+                _setValue(right, s - l - c)
+            else:
+                co = s - l - r
+                if co >= 0:
+                    _setValue(center, co)
+                else:
+                    _setValue(center, 0)
+                    _setValue(left, s - r)
+        return _handle
+
+    def _handleCenterChange(
+            self,
+            left: LabelNumberUnit,
+            right: LabelNumberUnit,
+            center: LabelNumberUnit,
+            getTotalSize: Callable[[], Optional[int]],
+            ) -> Callable[[], None]:
+        def _setValue(lnu: LabelNumberUnit, v: int) -> None:
+            lnu.number.blockSignals(True)
+            lnu.number.setValue(v)
+            lnu.number.blockSignals(False)
+
+        def _handle() -> None:
+            s = getTotalSize()
+            if s is None:
+                return
+            l = left.number.value()
+            c = center.number.value()
+            _setValue(right, s - l - c)
+        return _handle
+
     def _configureMargin(self) -> None:
-        labels = ['Top', 'Left', 'Bottom', 'Right']
-        for widget, label in zip(self._marginTextInputs, labels):
-            #widget.setPrefix(label + ': ')
-            #widget.setSuffix(' px')
-            widget.number.setRange(0, 10000)
+        for widget in self._marginInputs:
+            widget.number.setRange(-10000, 10000)
             widget.number.setValue(0)
             line = widget.number.lineEdit()
             line.editingFinished.connect(self._handleTransformChange)
             line.returnPressed.connect(self._handleTransformChange)
+
+        def _getDocWidth() -> Optional[int]:
+            doc = self._instance.activeDocument()
+            return doc.bounds().width() if doc else None
+        def _getDocHeight() -> Optional[int]:
+            doc = self._instance.activeDocument()
+            return doc.bounds().height() if doc else None
+
+        mis = self._marginInputs
+        edgeHandles = [
+            self._handleEdgeChange(mis[0], mis[1], self._containerWidth, _getDocWidth),
+            self._handleEdgeChange(mis[1], mis[0], self._containerWidth, _getDocWidth),
+            self._handleEdgeChange(mis[2], mis[3], self._containerHeight, _getDocHeight),
+            self._handleEdgeChange(mis[3], mis[2], self._containerHeight, _getDocHeight),
+        ]
+        for widget, handle in zip(self._marginInputs, edgeHandles):
+            widget.number.valueChanged.connect(handle)
+
+        self._containerWidth.number.setRange(0, 50000)
+        self._containerHeight.number.setRange(0, 50000)
+        centerHandles = [
+            self._handleCenterChange(mis[0], mis[1], self._containerWidth, _getDocWidth),
+            self._handleCenterChange(mis[2], mis[3], self._containerHeight, _getDocHeight),
+        ]
+        self._containerWidth.number.valueChanged.connect(centerHandles[0])
+        self._containerHeight.number.valueChanged.connect(centerHandles[1])
 
     def _configureScale(self) -> None:
         self._scaleTextInput.number.setRange(1, 1000)
