@@ -145,7 +145,8 @@ def loadImageToNode(image: K.QImage, node: K.Node) -> None:
     node.setPixelData(imageData, 0, 0, w, h)
 
 validImageExt = [
-    fmt.data().decode('utf-8') for fmt in K.QImageReader.supportedImageFormats()
+    '.' + fmt.data().decode('utf-8')
+    for fmt in K.QImageReader.supportedImageFormats()
 ]
 
 def getImagePaths(pathDir: Path) -> List[Path]:
