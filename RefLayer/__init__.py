@@ -1,16 +1,14 @@
 """
-TODO: Case where user deletes or changes the RefLayer node.
-TODO: Case where multiple instances, windows, or documents are used.
-TODO: Initialize container width and height in Margins.
 Later:
 >>> img = QImage('W:\\Media\\Images\\genshinCharacter\\Furina_Profile.webp')
 >>> QApplication.instance().clipboard().setImage(img)
 """
+import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import krita as K
 
@@ -121,27 +119,170 @@ def matchWidths(widgets: List[K.QWidget]) -> None:
     for widget in widgets:
         widget.setFixedWidth(width)
 
-class RefLayerWidget(K.QWidget):
-    validImageExt = [
-        '.webp',
-        '.avif',
-        '.png',
-        '.jpg',
-        '.jpeg',
-    ]
+@dataclass
+class Margins:
+    left: int = 0
+    right: int = 0
+    top: int = 0
+    bottom: int = 0
 
+    def toJson(self) -> dict:
+        obj = {
+            'left': self.left,
+            'right': self.right,
+            'top': self.top,
+            'bottom': self.bottom,
+        }
+        return obj
+
+def loadImageToNode(image: K.QImage, node: K.Node) -> None:
+    # The format is hardcoded. Maybe condition on it later.
+    image = image.convertToFormat(K.QImage.Format_ARGB32)
+    w = image.width()
+    h = image.height()
+    size = 4*w*h
+    imageData = image.constBits().asstring(size)
+    node.setPixelData(imageData, 0, 0, w, h)
+
+validImageExt = [
+    '.webp',
+    '.png',
+    '.jpg',
+    '.jpeg',
+]
+
+def getImagePaths(pathDir: Path) -> List[Path]:
+    paths = [
+        path for path in pathDir.iterdir()
+        if path.suffix in validImageExt
+    ]
+    return paths
+
+def getNextPath(path: Path) -> Path:
+    paths = getImagePaths(path.parent)
+    i = paths.index(path)
+    p = paths[(i+1) % len(paths)]
+    return p
+
+def getPrevPath(path: Path) -> Path:
+    paths = getImagePaths(path.parent)
+    i = paths.index(path)
+    p = paths[(i-1) % len(paths)]
+    return p
+
+@dataclass
+class LayerState:
+    doc: K.Document
+    node: K.Node
+    path: Path
+    alignment: Alignment = Alignment.CENTER
+    margins: Margins = field(default_factory=Margins)
+    scale: float = 1.0
+    scaleToFit: bool = True
+    currentScale: float = 1.0
+
+    def toJson(self) -> dict:
+        obj = {
+            'node': self.node.name(),
+            'path': str(self.path),
+            'alignment': self.alignment.name,
+            'margins': self.margins.toJson(),
+            'scale': self.scale,
+            'scaleToFit': self.scaleToFit,
+            'currentScale': self.currentScale,
+        }
+        return obj
+
+    @staticmethod
+    def fromJson(obj: dict, doc: K.Document) -> Optional['LayerState']:
+        node = doc.nodeByName(obj['node'])
+        if node is None:
+            return None
+        state = LayerState(
+            doc=doc,
+            node=node,
+            path=Path(obj['path']),
+            alignment=Alignment[obj['alignment']],
+            margins=Margins(**obj['margins']),
+            scale=obj['scale'],
+            scaleToFit=obj['scaleToFit'],
+            currentScale=obj['currentScale'])
+        return state
+
+    def update(self) -> None:
+        image = K.QImage(str(self.path))
+        node = self.doc.createNode(self.node.name(), 'paintlayer')
+        loadImageToNode(image, node)
+        self.applyTransform(node)
+        self.doc.refreshProjection()
+
+    def _getTransform(self, node: K.Node) -> TransformParams:
+        docRect = self.doc.bounds()
+        container = K.QRect(
+            docRect.x() + self.margins.left,
+            docRect.y() + self.margins.top,
+            docRect.width() - self.margins.left - self.margins.right,
+            docRect.height() - self.margins.top - self.margins.bottom)
+        t = computeTransform(
+            container=container,
+            img=node.bounds(),
+            alignment=self.alignment,
+            imageScale=self.scale,
+            scaleToFit=self.scaleToFit)
+        return t
+
+    def applyTransform(self, node: K.Node) -> None:
+        nodeRect = node.bounds()
+        w = nodeRect.width()
+        h = nodeRect.height()
+        t = self._getTransform(node)
+        # Node needs to have a parent to be scaled.
+        node.setVisible(False)
+        parent = self.node.parentNode()
+        if parent:
+            parent.addChildNode(node, self.node)
+        node.scaleNode(K.QPointF(t.x0, t.y0), int(w*t.s), int(h*t.s), 'Bicubic')
+        node.move(int(t.dx-t.x0), int(t.dy-t.y0))
+        node.setVisible(self.node.visible())
+        self.node.remove()
+        self.node = node
+        self.currentScale = t.s
+
+    def index(self) -> Tuple:
+        root = self.doc.rootNode()
+        indices = []
+        node = self.node
+        while node and node != root:
+            indices.append(node.index())
+        return tuple(reversed(indices))
+
+class DynamicComboBox(K.QComboBox):
+    def __init__(self, getItems: Callable[[], List[str]]) -> None:
+        self._getItems = getItems
+        super().__init__()
+
+    def showPopup(self) -> None:
+        text = self.currentText()
+        self.clear()
+        self.addItems(self._getItems())
+        self.setCurrentText(text)
+        super().showPopup()
+
+State = Tuple[List[LayerState], Optional[LayerState]]
+
+class RefLayerWidget(K.QWidget):
     def __init__(self) -> None:
         super().__init__()
         # State
-        self._alignment = Alignment.CENTER
-        self._margins = [0, 0, 0, 0]
-        self._imageScale = 1.0
-        self._scaleToFit = True
+        self._state: Dict[str, State] = {}
         # Krita state
         self._instance = K.Krita.instance()
         self._notifier = self._instance.notifier()
         self._window = None
         # Widgets
+        self._comboBox = DynamicComboBox(self._getLayerNames)
+        self._addLayerButton = K.QPushButton()
+        self._deleteLayerButton = K.QPushButton()
         self._fileDialog = K.QFileDialog()
         self._fileButton = K.QPushButton()
         self._fileText = K.QLineEdit('Select a file.')
@@ -161,6 +302,7 @@ class RefLayerWidget(K.QWidget):
         # Configuration
         self._configureNotifier()
         self._configureLayout()
+        self._configureCombo()
         self._configureFileSelection()
         self._configureNavigation()
         self._configureVisible()
@@ -169,14 +311,88 @@ class RefLayerWidget(K.QWidget):
         self._configureScale()
         self._configureExtension()
 
+    def _getActiveState(self) -> Optional[State]:
+        doc = self._instance.activeDocument()
+        if doc is None:
+            return None
+        if doc.name() not in self._state:
+            layers = []
+            if 'RefLayer' in doc.annotationTypes():
+                data = doc.annotation('RefLayer').data()
+                for obj in json.loads(data):
+                    layer = LayerState.fromJson(obj, doc)
+                    if layer:
+                        layers.append(layer)
+            activeLayer = layers[0] if layers else None
+            self._state[doc.name()] = (layers, activeLayer)
+        return self._state.get(doc.name())
+
+    def _setActiveState(self, state: State) -> None:
+        doc = self._instance.activeDocument()
+        if doc:
+            self._state[doc.name()] = state
+
+    def _cleanState(self) -> None:
+        state = self._getActiveState()
+        if state is None:
+            return
+        layers, activeLayer = state
+        layers = [
+            layer for layer in layers
+            if layer.node.parentNode() is not None
+        ]
+        if activeLayer is None or activeLayer.node.parentNode() is None:
+            activeLayer = layers[0] if layers else None
+        self._setActiveState((layers, activeLayer))
+
+    def _getLayerNames(self) -> List[str]:
+        # Routinely cleanup orphaned nodes. Maybe there is a signal for this?
+        self._cleanState()
+        state = self._getActiveState()
+        if state is None:
+            return []
+        return [layer.node.name() for layer in state[0]]
+
+    def _updateState(self, state: State) -> None:
+        layers, activeLayer = state
+        if activeLayer:
+            activeLayer.update()
+            text = f'Current Image Scale: {activeLayer.currentScale*100:.3g}%'
+            self._scaleText.setText(text)
+        doc = self._instance.activeDocument()
+        if doc:
+            obj = [layer.toJson() for layer in layers]
+            data = json.dumps(obj).encode('utf-8')
+            doc.setAnnotation('RefLayer', 'RefLayer Metadata', data)
+
+    def _updateStateUI(self, state: State) -> None:
+        layerNames = self._getLayerNames()
+        self._comboBox.clear()
+        self._comboBox.addItems(layerNames)
+        layers, activeLayer = state
+        if activeLayer:
+            self._comboBox.setCurrentText(activeLayer.node.name())
+            self._fileText.setText(str(activeLayer.path))
+            isVisible = activeLayer.node.visible()
+            icon = self._instance.icon('visible' if isVisible else 'novisible')
+            self._visibleButton.setIcon(icon)
+            for i, button in enumerate(self._alignmentButtons):
+                button.setChecked(i == activeLayer.alignment)
+            m = activeLayer.margins
+            for lnu, v in zip(self._marginInputs, [m.left, m.right, m.top, m.bottom]):
+                lnu.setValue(v)
+            docRect = activeLayer.doc.bounds()
+            self._containerWidth.setValue(docRect.width() - m.left - m.right)
+            self._containerHeight.setValue(docRect.height() - m.top - m.bottom)
+            self._scaleTextInput.setValue(int(activeLayer.scale*100))
+            self._scaleToFitCheckBox.setChecked(activeLayer.scaleToFit)
+            text = f'Current Image Scale: {activeLayer.currentScale*100:.3g}%'
+            self._scaleText.setText(text)
+
     def _handleActiveViewChanged(self) -> None:
-        refLayer = self._getRefLayer()
-        if refLayer:
-            self._fileText.setText(refLayer.path())
-            isVisible = refLayer.visible()
-            self._visibleButton.setIcon(self._instance.icon('visible' if isVisible else 'novisible'))
-        else:
-            self._fileText.setText('Select a file.')
+        state = self._getActiveState()
+        if state:
+            self._updateStateUI(state)
 
     def _handleWindowCreated(self) -> None:
         self._window = self._instance.activeWindow()
@@ -199,12 +415,25 @@ class RefLayerWidget(K.QWidget):
         scrollLayout.addWidget(scrollArea)
         self.setLayout(scrollLayout)
 
+        comboLayout = K.QHBoxLayout()
+        comboLayout.setContentsMargins(0, 0, 0, 0)
+        comboWidget = K.QWidget()
+        comboWidget.setLayout(comboLayout)
+        comboLayout.addWidget(self._addLayerButton)
+        comboLayout.addWidget(self._comboBox)
+        comboLayout.addWidget(self._deleteLayerButton)
+        self._addLayerButton.setIcon(self._instance.icon('addlayer'))
+        self._addLayerButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._deleteLayerButton.setIcon(self._instance.icon('deletelayer'))
+        self._deleteLayerButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        mainLayout.addWidget(comboWidget)
+
         fileLayout = K.QHBoxLayout()
         fileLayout.setContentsMargins(0, 0, 0, 0)
         fileWidget = K.QWidget()
         fileWidget.setLayout(fileLayout)
-        fileLayout.addWidget(self._fileText)
         fileLayout.addWidget(self._fileButton)
+        fileLayout.addWidget(self._fileText)
         self._fileText.setReadOnly(True)
         self._fileButton.setIcon(self._instance.icon('folder'))
         mainLayout.addWidget(fileWidget)
@@ -213,11 +442,11 @@ class RefLayerWidget(K.QWidget):
         navLayout.setContentsMargins(0, 0, 0, 0)
         navWidget = K.QWidget()
         navWidget.setLayout(navLayout)
+        navLayout.addWidget(self._visibleButton)
         navLayout.addWidget(self._prevButton)
         navLayout.addWidget(self._nextButton)
         self._visibleButton.setIcon(self._instance.icon('visible'))
         self._visibleButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
-        navLayout.addWidget(self._visibleButton)
         mainLayout.addWidget(navWidget)
 
         tabWidget = K.QTabWidget()
@@ -258,123 +487,121 @@ class RefLayerWidget(K.QWidget):
         scaleLayout.addWidget(self._scaleText)
         tabWidget.addTab(scaleWidget, 'Scale')
 
-    def _getRefLayer(self) -> Optional[K.Node]:
+    def _handleIndexChanged(self, index: int) -> None:
+        state = self._getActiveState()
+        if state and 0 <= index and index < len(state[0]):
+            layers, activeLayer = state
+            if layers[index] != activeLayer:
+                state = (layers, layers[index])
+                self._setActiveState(state)
+                self._comboBox.blockSignals(True)
+                self._updateStateUI(state)
+                self._comboBox.blockSignals(False)
+
+    def _handleAddLayer(self) -> None:
         doc = self._instance.activeDocument()
-        return doc.nodeByName('##RefLayer') if doc else None
-
-    def _updateRefLayer(self, path: Path) -> K.Node:
-        self._fileText.setText(str(path))
-        self._fileDialog.setDirectory(str(path.parent))
-        refLayer = self._getRefLayer()
-        props = (str(path), 'None', 'Bicubic')
-        if refLayer:
-            refLayer.setProperties(*props)
-        else:
-            doc = self._instance.activeDocument()
-            refLayer = doc.createFileLayer('##RefLayer', *props)
-            activeNode = doc.activeNode()
-            parentNode = activeNode.parentNode()
-            parentNode.addChildNode(refLayer, activeNode)
-        return refLayer
-
-    def _getTransformMask(self) -> Optional[K.Node]:
-        doc = self._instance.activeDocument()
-        return doc.nodeByName('##RefLayer#Transform') if doc else None
-
-    def _updateTransformMask(self, refLayer: K.Node) -> K.Node:
-        doc = self._instance.activeDocument()
-        docRect = doc.bounds()
-        container = K.QRect(
-            docRect.x() + self._margins[0],
-            docRect.y() + self._margins[2],
-            docRect.width() - self._margins[0] - self._margins[1],
-            docRect.height() - self._margins[2] - self._margins[3])
-        transformMask = self._getTransformMask()
-        if transformMask is None:
-            transformMask = doc.createTransformMask('##RefLayer#Transform')
-            refLayer.addChildNode(transformMask, None)
-        transform = computeTransform(
-            container,
-            refLayer.bounds(),
-            self._alignment,
-            self._imageScale,
-            self._scaleToFit)
-        transformMask.fromXML(transform.xml())
-        self._scaleText.setText(f'Current Image Scale: {transform.s*100:.3g}%')
-        doc.refreshProjection()
-        return transformMask
-
-    def _handleFileButtonClick(self):
-        if self._instance.activeDocument() and self._fileDialog.exec():
+        state = self._getActiveState()
+        if doc and state and self._fileDialog.exec():
             files = self._fileDialog.selectedFiles()
             path = Path(files[0])
-            refLayer = self._updateRefLayer(path)
-            self._updateTransformMask(refLayer)
+            n = len(state[0]) + 1
+            node = doc.createNode(f'##RefLayer {n}', 'paintlayer')
+            activeNode = doc.activeNode()
+            activeNode.parentNode().addChildNode(node, activeNode)
+            activeLayer = LayerState(doc, node, path)
+            state[0].append(activeLayer)
+            state = (state[0], activeLayer)
+            self._setActiveState(state)
+            self._updateStateUI(state)
+            self._updateState(state)
+
+    def _handleDeleteLayer(self) -> None:
+        state = self._getActiveState()
+        if state and state[1]:
+            layers, activeLayer = state
+            activeLayer.node.remove()
+            layers.remove(activeLayer)
+            if layers:
+                state = (layers, layers[0])
+                self._setActiveState(state)
+                self._updateStateUI(state)
+
+    def _configureCombo(self) -> None:
+        self._comboBox.currentIndexChanged.connect(self._handleIndexChanged)
+        self._addLayerButton.clicked.connect(self._handleAddLayer)
+        self._deleteLayerButton.clicked.connect(self._handleDeleteLayer)
+
+    def _handleFileButtonClick(self) -> None:
+        state = self._getActiveState()
+        if state and state[1] and self._fileDialog.exec():
+            files = self._fileDialog.selectedFiles()
+            path = Path(files[0])
+            state[1].path = path
+            self._fileText.setText(str(path))
+            self._updateState(state)
 
     def _configureFileSelection(self) -> None:
-        ext = ' '.join(map(lambda s: '*' + s, RefLayerWidget.validImageExt))
+        ext = ' '.join(map(lambda s: '*' + s, validImageExt))
         self._fileDialog.setNameFilter(f'Images ({ext})')
         self._fileButton.clicked.connect(self._handleFileButtonClick)
 
-    def _nextImage(self, fn) -> None:
-        refLayer = self._getRefLayer()
-        if refLayer is None:
-            return
-        path = Path(refLayer.path())
-        paths = list(path.parent.iterdir())
-        i = paths.index(path)
-        for j in range(len(paths)):
-            idx = fn(i, j) % len(paths)
-            if paths[idx].suffix in RefLayerWidget.validImageExt:
-                nextPath = paths[idx]
-                refLayer = self._updateRefLayer(nextPath)
-                self._updateTransformMask(refLayer)
-                return
-
     def _handleNextButtonClick(self) -> None:
-        self._nextImage(lambda i, j: i+j+1)
+        state = self._getActiveState()
+        if state and state[1]:
+            path = getNextPath(state[1].path)
+            state[1].path = path
+            self._fileText.setText(str(path))
+            self._updateState(state)
 
     def _handlePrevButtonClick(self) -> None:
-        self._nextImage(lambda i, j: i-j-1)
+        state = self._getActiveState()
+        if state and state[1]:
+            path = getPrevPath(state[1].path)
+            state[1].path = path
+            self._fileText.setText(str(path))
+            self._updateState(state)
 
     def _configureNavigation(self) -> None:
         self._nextButton.clicked.connect(self._handleNextButtonClick)
         self._prevButton.clicked.connect(self._handlePrevButtonClick)
 
     def _handleVisibleButtonClick(self) -> None:
-        refLayer = self._getRefLayer()
-        if refLayer:
-            isVisible = not refLayer.visible()
-            refLayer.setVisible(isVisible)
-            self._visibleButton.setIcon(self._instance.icon('visible' if isVisible else 'novisible'))
-            # Document must exist since refLayer exists.
-            self._instance.activeDocument().refreshProjection()
+        state = self._getActiveState()
+        if state and state[1]:
+            node = state[1]
+            isVisible = not state[1].node.visible()
+            state[1].node.setVisible(isVisible)
+            icon = self._instance.icon('visible' if isVisible else 'novisible')
+            self._visibleButton.setIcon(icon)
+            state[1].doc.refreshProjection()
 
     def _configureVisible(self) -> None:
         self._visibleButton.clicked.connect(self._handleVisibleButtonClick)
 
     def _handleAlignmentButtonClick(self, a: Alignment) -> Callable[[], None]:
         def _handle() -> None:
-            self._alignment = a
             for i, button in enumerate(self._alignmentButtons):
                 button.setChecked(i == a)
-            refLayer = self._getRefLayer()
-            if refLayer:
-                self._updateTransformMask(refLayer)
+            state = self._getActiveState()
+            if state and state[1]:
+                state[1].alignment = a
+                self._updateState(state)
         return _handle
 
     def _configureAlignment(self) -> None:
         for i, button in enumerate(self._alignmentButtons):
             button.setChecked(i == Alignment.CENTER)
-            button.clicked.connect(self._handleAlignmentButtonClick(i))
+            button.clicked.connect(self._handleAlignmentButtonClick(Alignment(i)))
 
     def _handleTransformChange(self) -> None:
-        self._margins = [m.number.value() for m in self._marginInputs]
-        self._imageScale = self._scaleTextInput.number.value() / 100
-        self._scaleToFit = self._scaleToFitCheckBox.isChecked()
-        refLayer = self._getRefLayer()
-        if refLayer:
-            self._updateTransformMask(refLayer)
+        state = self._getActiveState()
+        if state and state[1]:
+            attrs = ['left', 'right', 'top', 'bottom']
+            for m, attr in zip(self._marginInputs, attrs):
+                setattr(state[1].margins, attr, m.number.value())
+            state[1].scale = self._scaleTextInput.number.value() / 100
+            state[1].scaleToFit = self._scaleToFitCheckBox.isChecked()
+            self._updateState(state)
 
     def _handleEdgeChange(
             self,
@@ -424,13 +651,13 @@ class RefLayerWidget(K.QWidget):
         activeNode = doc.activeNode()
         docRect = doc.bounds()
         rect = activeNode.bounds()
-        self._margins = [
+        margins = [
             rect.left() - docRect.left(),
             docRect.right() - rect.right(),
             rect.top() - docRect.top(),
             docRect.bottom() - rect.bottom(),
         ]
-        for v, widget in zip(self._margins, self._marginInputs):
+        for v, widget in zip(margins, self._marginInputs):
             widget.setValue(v)
         self._containerWidth.setValue(rect.width())
         self._containerHeight.setValue(rect.height())
