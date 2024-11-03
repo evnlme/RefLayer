@@ -7,7 +7,6 @@ name = 'RefLayer'
 local_paths = [
     f'{name}.desktop',
     f'{name}/',
-    'Manual.html',
 ]
 
 def recursiveWrite(f: ZipFile, path: Path):
