@@ -145,10 +145,7 @@ def loadImageToNode(image: K.QImage, node: K.Node) -> None:
     node.setPixelData(imageData, 0, 0, w, h)
 
 validImageExt = [
-    '.webp',
-    '.png',
-    '.jpg',
-    '.jpeg',
+    fmt.data().decode('utf-8') for fmt in K.QImageReader.supportedImageFormats()
 ]
 
 def getImagePaths(pathDir: Path) -> List[Path]:
@@ -373,6 +370,7 @@ class RefLayerWidget(K.QWidget):
         if activeLayer:
             self._comboBox.setCurrentText(activeLayer.node.name())
             self._fileText.setText(str(activeLayer.path))
+            self._fileDialog.setDirectory(str(activeLayer.path.parent))
             isVisible = activeLayer.node.visible()
             icon = self._instance.icon('visible' if isVisible else 'novisible')
             self._visibleButton.setIcon(icon)
@@ -498,14 +496,27 @@ class RefLayerWidget(K.QWidget):
                 self._updateStateUI(state)
                 self._comboBox.blockSignals(False)
 
+    def _createLayerName(self, layers: List[LayerState]) -> str:
+        # Some extra work to avoid duplicate names.
+        maxNum = 0
+        for layer in layers:
+            name = layer.node.name()
+            i = len(name) - 1
+            num = 0
+            while name[i].isdigit() and i >= 0:
+                i -= 1
+            if i + 1 < len(name):
+                maxNum = max(maxNum, int(name[i+1:]))
+        return f'##RefLayer {maxNum+1}'
+
     def _handleAddLayer(self) -> None:
         doc = self._instance.activeDocument()
         state = self._getActiveState()
         if doc and state and self._fileDialog.exec():
             files = self._fileDialog.selectedFiles()
             path = Path(files[0])
-            n = len(state[0]) + 1
-            node = doc.createNode(f'##RefLayer {n}', 'paintlayer')
+            nodeName = self._createLayerName(state[0])
+            node = doc.createNode(nodeName, 'paintlayer')
             activeNode = doc.activeNode()
             activeNode.parentNode().addChildNode(node, activeNode)
             activeLayer = LayerState(doc, node, path)
@@ -537,6 +548,7 @@ class RefLayerWidget(K.QWidget):
             files = self._fileDialog.selectedFiles()
             path = Path(files[0])
             state[1].path = path
+            self._fileDialog.setDirectory(str(path.parent))
             self._fileText.setText(str(path))
             self._updateState(state)
 
