@@ -440,8 +440,10 @@ class RefLayerWidget(K.QWidget):
         comboLayout.addWidget(self._deleteLayerButton)
         self._addLayerButton.setIcon(self._instance.icon('addlayer'))
         self._addLayerButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._addLayerButton.setToolTip('Add new RefLayer.')
         self._deleteLayerButton.setIcon(self._instance.icon('deletelayer'))
         self._deleteLayerButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._deleteLayerButton.setToolTip('Delete RefLayer.')
         mainLayout.addWidget(comboWidget)
 
         fileLayout = K.QHBoxLayout()
@@ -452,6 +454,7 @@ class RefLayerWidget(K.QWidget):
         fileLayout.addWidget(self._fileText)
         self._fileText.setReadOnly(True)
         self._fileButton.setIcon(self._instance.icon('folder'))
+        self._fileButton.setToolTip('Change path.')
         mainLayout.addWidget(fileWidget)
 
         navLayout = K.QHBoxLayout()
@@ -463,6 +466,7 @@ class RefLayerWidget(K.QWidget):
         navLayout.addWidget(self._nextButton)
         self._visibleButton.setIcon(self._instance.icon('visible'))
         self._visibleButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._visibleButton.setToolTip('Toggle visibility.')
         mainLayout.addWidget(navWidget)
 
         tabWidget = K.QTabWidget()
@@ -478,6 +482,7 @@ class RefLayerWidget(K.QWidget):
         gridWidget.setLayout(gridLayout)
         for i, button in enumerate(self._alignmentButtons):
             gridLayout.addWidget(button, i // 3, i % 3)
+            button.setToolTip(Alignment(i).name)
         alignLayout.addWidget(gridWidget)
         tabWidget.addTab(alignWidget, 'Alignment')
 
