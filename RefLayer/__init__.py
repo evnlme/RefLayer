@@ -146,11 +146,11 @@ def loadImageToNode(image: K.QImage, node: K.Node) -> None:
     imageData = image.constBits().asstring(size)
     node.setPixelData(imageData, 0, 0, w, h)
 
-validImageExt = [
+validImageExt = set(
     '.' + fmt.data().decode('utf-8')
     for fmt in K.QImageReader.supportedImageFormats()
-]
-validImageExt.remove('.kra')
+)
+validImageExt.discard('.kra')
 
 def getImagePaths(pathDir: Path) -> List[Path]:
     paths = [
@@ -267,6 +267,7 @@ class LayerState:
         node = self.node
         while node and node != root:
             indices.append(node.index())
+            node = node.parentNode()
         return tuple(reversed(indices))
 
 class DynamicComboBox(K.QComboBox):
@@ -354,6 +355,7 @@ class RefLayerWidget(K.QWidget):
             layer for layer in layers
             if layer.node.parentNode() is not None
         ]
+        layers.sort(key=lambda x: x.index(), reverse=True)
         if activeLayer is None or activeLayer.node.parentNode() is None:
             activeLayer = layers[0] if layers else None
         self._setActiveState((layers, activeLayer))
