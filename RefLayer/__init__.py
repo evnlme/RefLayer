@@ -1,8 +1,3 @@
-"""
-Later:
->>> img = QImage('W:\\Media\\Images\\genshinCharacter\\Furina_Profile.webp')
->>> QApplication.instance().clipboard().setImage(img)
-"""
 import json
 import random
 from dataclasses import dataclass, field
@@ -303,6 +298,7 @@ class RefLayerWidget(K.QWidget):
         self._nextButton = K.QPushButton('Next Image')
         self._prevButton = K.QPushButton('Prev Image')
         self._visibleButton = K.QPushButton()
+        self._copyButton = K.QPushButton()
         self._alignmentButtons = [K.QCheckBox() for _ in range(9)]
         self._marginFromLayerButton = K.QPushButton('Margins from Active Layer.')
         self._marginInputs = [
@@ -320,6 +316,7 @@ class RefLayerWidget(K.QWidget):
         self._configureFileSelection()
         self._configureNavigation()
         self._configureVisible()
+        self._configureCopy()
         self._configureAlignment()
         self._configureMargin()
         self._configureScale()
@@ -462,11 +459,15 @@ class RefLayerWidget(K.QWidget):
         navWidget = K.QWidget()
         navWidget.setLayout(navLayout)
         navLayout.addWidget(self._visibleButton)
+        navLayout.addWidget(self._copyButton)
         navLayout.addWidget(self._prevButton)
         navLayout.addWidget(self._nextButton)
         self._visibleButton.setIcon(self._instance.icon('visible'))
         self._visibleButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
         self._visibleButton.setToolTip('Toggle visibility.')
+        self._copyButton.setIcon(self._instance.icon('cloneLayer'))
+        self._copyButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._copyButton.setToolTip('Copy full-sized image to clipboard.')
         mainLayout.addWidget(navWidget)
 
         tabWidget = K.QTabWidget()
@@ -603,7 +604,6 @@ class RefLayerWidget(K.QWidget):
     def _handleVisibleButtonClick(self) -> None:
         state = self._getActiveState()
         if state and state[1]:
-            node = state[1]
             isVisible = not state[1].node.visible()
             state[1].node.setVisible(isVisible)
             icon = self._instance.icon('visible' if isVisible else 'novisible')
@@ -612,6 +612,15 @@ class RefLayerWidget(K.QWidget):
 
     def _configureVisible(self) -> None:
         self._visibleButton.clicked.connect(self._handleVisibleButtonClick)
+
+    def _handleCopyButtonClick(self) -> None:
+        state = self._getActiveState()
+        if state and state[1]:
+            img = K.QImage(str(state[1].path))
+            K.QApplication.instance().clipboard().setImage(img)
+
+    def _configureCopy(self) -> None:
+        self._copyButton.clicked.connect(self._handleCopyButtonClick)
 
     def _handleAlignmentButtonClick(self, a: Alignment) -> Callable[[], None]:
         def _handle() -> None:
