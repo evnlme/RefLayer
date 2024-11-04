@@ -19,6 +19,8 @@ class TransformParams:
     dx: float
     dy: float
     s: float
+    w: float
+    h: float
 
     def xml(self) -> str:
         transform = f"""\
@@ -73,7 +75,7 @@ def computeTransform(
     y0 = img.y()
     dx = container.x() + (wc - wi*s)*(alignment % 3)/2
     dy = container.y() + (hc - hi*s)*(alignment // 3)/2
-    return TransformParams(x0, y0, dx, dy, s*imageScale)
+    return TransformParams(x0, y0, dx, dy, s*imageScale, wi*s, hi*s)
 
 class LabelNumberUnit(K.QWidget):
     def __init__(self, label: str, units: List[str], includeLock: bool = False) -> None:
@@ -148,6 +150,7 @@ validImageExt = [
     '.' + fmt.data().decode('utf-8')
     for fmt in K.QImageReader.supportedImageFormats()
 ]
+validImageExt.remove('.kra')
 
 def getImagePaths(pathDir: Path) -> List[Path]:
     paths = [
@@ -179,6 +182,10 @@ class LayerState:
     scaleToFit: bool = True
     currentScale: float = 1.0
 
+    def __post_init__(self) -> None:
+        self._prevPath = None
+        self._prevBounds = self.doc.bounds()
+
     def toJson(self) -> dict:
         obj = {
             'node': self.node.name(),
@@ -208,38 +215,46 @@ class LayerState:
         return state
 
     def update(self) -> None:
+        if self.path == self._prevPath:
+            t = self._getTransform(self._prevBounds)
+            if t.s == self.currentScale:
+                self.node.move(int(t.dx-t.x0), int(t.dy-t.y0))
+                self.doc.refreshProjection()
+                return
         image = K.QImage(str(self.path))
         node = self.doc.createNode(self.node.name(), 'paintlayer')
         loadImageToNode(image, node)
-        self.applyTransform(node)
+        bounds = K.QRect(node.bounds())
+        transform = self._getTransform(bounds)
+        self._applyTransform(node, transform)
+        self.node.setAlphaLocked(True)
         self.doc.refreshProjection()
+        self._prevPath = self.path
+        self._prevBounds = bounds
 
-    def _getTransform(self, node: K.Node) -> TransformParams:
+    def _getTransform(self, bounds: K.QRect) -> TransformParams:
         docRect = self.doc.bounds()
         container = K.QRect(
             docRect.x() + self.margins.left,
             docRect.y() + self.margins.top,
             docRect.width() - self.margins.left - self.margins.right,
             docRect.height() - self.margins.top - self.margins.bottom)
-        t = computeTransform(
+        transform = computeTransform(
             container=container,
-            img=node.bounds(),
+            img=bounds,
             alignment=self.alignment,
             imageScale=self.scale,
             scaleToFit=self.scaleToFit)
-        return t
+        return transform
 
-    def applyTransform(self, node: K.Node) -> None:
-        nodeRect = node.bounds()
-        w = nodeRect.width()
-        h = nodeRect.height()
-        t = self._getTransform(node)
+    def _applyTransform(self, node: K.Node, transform: TransformParams) -> None:
         # Node needs to have a parent to be scaled.
         node.setVisible(False)
         parent = self.node.parentNode()
         if parent:
             parent.addChildNode(node, self.node)
-        node.scaleNode(K.QPointF(t.x0, t.y0), int(w*t.s), int(h*t.s), 'Bicubic')
+        t = transform
+        node.scaleNode(K.QPointF(t.x0, t.y0), int(t.w), int(t.h), 'Bicubic')
         node.move(int(t.dx-t.x0), int(t.dy-t.y0))
         node.setVisible(self.node.visible())
         self.node.remove()
