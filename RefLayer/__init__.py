@@ -668,7 +668,7 @@ class RefLayerWidget(K.QWidget):
         if not doc.bounds().contains(pos):
             return None
         for layer in layers:
-            if layer.node.bounds().contains(pos):
+            if layer.node.visible() and layer.node.bounds().contains(pos):
                 data = layer.node.projectionPixelData(pos.x(), pos.y(), 1, 1)
                 if ord(data[3]) >= 128:
                     return layer
@@ -704,12 +704,17 @@ class RefLayerWidget(K.QWidget):
 
     def _handleVisibleButtonClick(self) -> None:
         state = self._getActiveState()
-        if state and state[1]:
-            isVisible = not state[1].node.visible()
-            state[1].node.setVisible(isVisible)
-            icon = self._instance.icon('visible' if isVisible else 'novisible')
-            self._visibleButton.setIcon(icon)
-            state[1].doc.refreshProjection()
+        if state:
+            layers, activeLayer = state
+            chosenLayer = self._chooseLayer(layers) or activeLayer
+            if chosenLayer is None:
+                return
+            isVisible = not chosenLayer.node.visible()
+            chosenLayer.node.setVisible(isVisible)
+            if chosenLayer == activeLayer:
+                icon = self._instance.icon('visible' if isVisible else 'novisible')
+                self._visibleButton.setIcon(icon)
+            chosenLayer.doc.refreshProjection()
 
     def _configureVisible(self) -> None:
         self._visibleButton.clicked.connect(self._handleVisibleButtonClick)
