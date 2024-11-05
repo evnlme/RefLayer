@@ -247,7 +247,12 @@ class LayerState:
         node.setVisible(False)
         parent = self.node.parentNode()
         if parent:
+            # Add child node changes the active node so it needs to be saved.
+            # Bug: https://bugs.kde.org/show_bug.cgi?id=495811
+            activeNode = self.doc.activeNode()
             parent.addChildNode(node, self.node)
+            if activeNode != self.node:
+                self.doc.setActiveNode(activeNode)
         t = transform
         node.scaleNode(K.QPointF(t.x0, t.y0), int(t.w), int(t.h), 'Bicubic')
         node.move(int(t.dx-t.x0), int(t.dy-t.y0))
@@ -335,9 +340,6 @@ class CanvasCoordinates:
         pos = widgetToImage.map(widgetPos)
         return pos
 
-# Bug: Document management
-# Bug: Active layer
-
 State = Tuple[List[LayerState], Optional[LayerState]]
 
 class RefLayerWidget(K.QWidget):
@@ -406,6 +408,11 @@ class RefLayerWidget(K.QWidget):
             self._state[doc.name()] = state
 
     def _cleanState(self) -> None:
+        # Remove closed documents.
+        docNames = set(doc.name() for doc in self._instance.documents())
+        for docName in (self._state.keys() - docNames):
+            del self._state[docName]
+        # Remove orphaned nodes and sort layers.
         state = self._getActiveState()
         if state is None:
             return
@@ -606,6 +613,7 @@ class RefLayerWidget(K.QWidget):
             node = doc.createNode(nodeName, 'paintlayer')
             activeNode = doc.activeNode()
             activeNode.parentNode().addChildNode(node, activeNode)
+            doc.setActiveNode(activeNode)
             activeLayer = LayerState(doc, node, path)
             state[0].append(activeLayer)
             state = (state[0], activeLayer)
