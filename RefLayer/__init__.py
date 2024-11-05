@@ -277,6 +277,67 @@ class DynamicComboBox(K.QComboBox):
         self.setCurrentText(text)
         super().showPopup()
 
+class IdHash:
+    """Wrapper for id-based hashing."""
+    def __init__(self, obj: object) -> None:
+        self.obj = obj
+
+    def __eq__(self, other: object) -> bool:
+        return self.obj == other.obj
+
+    def __hash__(self) -> int:
+        return id(self.obj)
+
+    @staticmethod
+    def apply(objs: List[object]) -> List['IdHash']:
+        return [IdHash(obj) for obj in objs]
+
+class CanvasCoordinates:
+    """Workaround for getting canvas coordinates."""
+    def __init__(self) -> None:
+        self._instance = K.Krita.instance()
+
+    def _getCanvasWidgets(self) -> List[K.QOpenGLWidget]:
+        window = self._instance.activeWindow()
+        if window is None:
+            return []
+        qwindow = window.qwindow()
+        pattern = K.QRegExp('^view_.*')
+        viewWidgets = qwindow.findChildren(K.QWidget, pattern)
+        canvasWidgets = []
+        for viewWidget in viewWidgets:
+            obj = viewWidget.findChild(K.QOpenGLWidget)
+            if obj:
+                canvasWidgets.append(obj)
+        return canvasWidgets
+
+    def _getActiveCanvasWidget(self) -> Optional[K.QOpenGLWidget]:
+        # Assume Documents and Canvas Widgets maintain insertion order.
+        doc = self._instance.activeDocument()
+        docs = self._instance.documents()
+        if doc is None:
+            return None
+        i = docs.index(doc)
+        canvasWidgets = self._getCanvasWidgets()
+        return canvasWidgets[i]
+
+    def getPosition(self) -> Optional[K.QPoint]:
+        window = self._instance.activeWindow()
+        view = window.activeView() if window else None
+        canvasWidget = self._getActiveCanvasWidget()
+        if view is None or canvasWidget is None:
+            return None
+        flakeToImage = view.flakeToImageTransform()
+        widgetToFlake = view.flakeToCanvasTransform().inverted()[0]
+        widgetToImage = widgetToFlake * flakeToImage
+        globalPos = K.QCursor.pos()
+        widgetPos = canvasWidget.mapFromGlobal(globalPos)
+        pos = widgetToImage.map(widgetPos)
+        return pos
+
+# Bug: Document management
+# Bug: Active layer
+
 State = Tuple[List[LayerState], Optional[LayerState]]
 
 class RefLayerWidget(K.QWidget):
@@ -288,6 +349,7 @@ class RefLayerWidget(K.QWidget):
         self._instance = K.Krita.instance()
         self._notifier = self._instance.notifier()
         self._window = None
+        self._coords = CanvasCoordinates()
         # Widgets
         self._comboBox = DynamicComboBox(self._getLayerNames)
         self._addLayerButton = K.QPushButton()
@@ -365,12 +427,13 @@ class RefLayerWidget(K.QWidget):
             return []
         return [layer.node.name() for layer in state[0]]
 
-    def _updateState(self, state: State) -> None:
+    def _updateState(self, state: State, updateUI: bool = True) -> None:
         layers, activeLayer = state
         if activeLayer:
             activeLayer.update()
-            text = f'Current Image Scale: {activeLayer.currentScale*100:.3g}%'
-            self._scaleText.setText(text)
+            if updateUI:
+                text = f'Current Image Scale: {activeLayer.currentScale*100:.3g}%'
+                self._scaleText.setText(text)
         doc = self._instance.activeDocument()
         if doc:
             obj = [layer.toJson() for layer in layers]
@@ -581,21 +644,39 @@ class RefLayerWidget(K.QWidget):
         self._fileDialog.setNameFilter(f'Images ({ext})')
         self._fileButton.clicked.connect(self._handleFileButtonClick)
 
-    def _handleNextButtonClick(self) -> None:
+    def _chooseLayer(self, layers: List[LayerState]) -> Optional[LayerState]:
+        pos = self._coords.getPosition()
+        doc = self._instance.activeDocument()
+        if pos is None or doc is None:
+            return None
+        if not doc.bounds().contains(pos):
+            return None
+        for layer in layers:
+            if layer.node.bounds().contains(pos):
+                data = layer.node.projectionPixelData(pos.x(), pos.y(), 1, 1)
+                if ord(data[3]) >= 128:
+                    return layer
+        return None
+
+    def _handlePathSuccessor(self, getPath: Callable[[Path], Path]) -> None:
         state = self._getActiveState()
-        if state and state[1]:
-            path = getNextPath(state[1].path)
-            state[1].path = path
-            self._fileText.setText(str(path))
-            self._updateState(state)
+        if state:
+            layers, activeLayer = state
+            chosenLayer = self._chooseLayer(layers) or activeLayer
+            updateUI = chosenLayer == activeLayer
+            if chosenLayer is None:
+                return
+            path = getPath(chosenLayer.path)
+            chosenLayer.path = path
+            if updateUI:
+                self._fileText.setText(str(path))
+            self._updateState((layers, chosenLayer), updateUI=updateUI)
+
+    def _handleNextButtonClick(self) -> None:
+        self._handlePathSuccessor(getNextPath)
 
     def _handlePrevButtonClick(self) -> None:
-        state = self._getActiveState()
-        if state and state[1]:
-            path = getPrevPath(state[1].path)
-            state[1].path = path
-            self._fileText.setText(str(path))
-            self._updateState(state)
+        self._handlePathSuccessor(getPrevPath)
 
     def _configureNavigation(self) -> None:
         self._nextButton.clicked.connect(self._handleNextButtonClick)
