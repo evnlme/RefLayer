@@ -27,6 +27,18 @@
           <isCheckable>false</isCheckable>
           <statusTip></statusTip>
         </Action>
+        <Action name="RefLayer_RandImage">
+          <icon></icon>
+          <text>Rand Image</text>
+          <whatsThis></whatsThis>
+          <toolTip></toolTip>
+          <iconText></iconText>
+          <activationFlags></activationFlags>
+          <activationConditions></activationConditions>
+          <shortcut>none</shortcut>
+          <isCheckable>false</isCheckable>
+          <statusTip></statusTip>
+        </Action>
         <Action name="RefLayer_Visible">
           <icon></icon>
           <text>Visible Toggle</text>

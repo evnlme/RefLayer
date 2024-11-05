@@ -174,6 +174,13 @@ def getPrevPath(path: Path) -> Path:
     p = paths[(i-1) % len(paths)]
     return p
 
+def getRandPath(path: Path) -> Path:
+    paths = getImagePaths(path.parent)
+    i = paths.index(path)
+    j = random.randrange(1, len(paths))
+    p = paths[(i+j) % len(paths)]
+    return p
+
 @dataclass
 class LayerState:
     doc: K.Document
@@ -254,7 +261,8 @@ class LayerState:
 
     def _applyTransform(self, node: K.Node, transform: TransformParams) -> None:
         # Node needs to have a parent to be scaled.
-        # node.setVisible(False)
+        visible = self.node.visible()
+        node.setVisible(False)
         # parent = self.node.parentNode()
         # if parent:
         #     # Add child node changes the active node so it needs to be saved.
@@ -266,7 +274,7 @@ class LayerState:
         t = transform
         node.scaleNode(K.QPointF(t.x0, t.y0), int(t.w), int(t.h), 'Bicubic')
         node.move(int(t.dx-t.x0), int(t.dy-t.y0))
-        # node.setVisible(self.node.visible())
+        node.setVisible(visible)
         # self.node.remove()
         # self.node = node
         self.currentScale = t.s
@@ -291,21 +299,6 @@ class DynamicComboBox(K.QComboBox):
         self.addItems(self._getItems())
         self.setCurrentText(text)
         super().showPopup()
-
-class IdHash:
-    """Wrapper for id-based hashing."""
-    def __init__(self, obj: object) -> None:
-        self.obj = obj
-
-    def __eq__(self, other: object) -> bool:
-        return self.obj == other.obj
-
-    def __hash__(self) -> int:
-        return id(self.obj)
-
-    @staticmethod
-    def apply(objs: List[object]) -> List['IdHash']:
-        return [IdHash(obj) for obj in objs]
 
 class CanvasCoordinates:
     """Workaround for getting canvas coordinates."""
@@ -371,6 +364,7 @@ class RefLayerWidget(K.QWidget):
         self._fileText = K.QLineEdit('Select a file.')
         self._nextButton = K.QPushButton('Next Image')
         self._prevButton = K.QPushButton('Prev Image')
+        self._randButton = K.QPushButton()
         self._visibleButton = K.QPushButton()
         self._copyButton = K.QPushButton()
         self._alignmentButtons = [K.QCheckBox() for _ in range(9)]
@@ -542,12 +536,16 @@ class RefLayerWidget(K.QWidget):
         navLayout.addWidget(self._copyButton)
         navLayout.addWidget(self._prevButton)
         navLayout.addWidget(self._nextButton)
+        navLayout.addWidget(self._randButton)
         self._visibleButton.setIcon(self._instance.icon('visible'))
         self._visibleButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
         self._visibleButton.setToolTip('Toggle visibility.')
         self._copyButton.setIcon(self._instance.icon('cloneLayer'))
         self._copyButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
         self._copyButton.setToolTip('Copy full-sized image to clipboard.')
+        self._randButton.setIcon(self._instance.icon('view-refresh'))
+        self._randButton.setSizePolicy(K.QSizePolicy.Fixed, K.QSizePolicy.Fixed)
+        self._randButton.setToolTip('Random image.')
         mainLayout.addWidget(navWidget)
 
         tabWidget = K.QTabWidget()
@@ -696,9 +694,13 @@ class RefLayerWidget(K.QWidget):
     def _handlePrevButtonClick(self) -> None:
         self._handlePathSuccessor(getPrevPath)
 
+    def _handleRandButtonClick(self) -> None:
+        self._handlePathSuccessor(getRandPath)
+
     def _configureNavigation(self) -> None:
         self._nextButton.clicked.connect(self._handleNextButtonClick)
         self._prevButton.clicked.connect(self._handlePrevButtonClick)
+        self._randButton.clicked.connect(self._handleRandButtonClick)
 
     def _handleVisibleButtonClick(self) -> None:
         state = self._getActiveState()
@@ -870,9 +872,11 @@ class RefLayerExt(K.Extension):
         loc = 'tools/scripts/RefLayer_Menu'
         nextAction = window.createAction('RefLayer_NextImage', 'Next Image', loc)
         prevAction = window.createAction('RefLayer_PrevImage', 'Prev Image', loc)
+        randAction = window.createAction('RefLayer_RandImage', 'Rand Image', loc)
         visibleAction = window.createAction('RefLayer_Visible', 'Visible Toggle', loc)
         nextAction.triggered.connect(self._widget._handleNextButtonClick)
         prevAction.triggered.connect(self._widget._handlePrevButtonClick)
+        randAction.triggered.connect(self._widget._handleRandButtonClick)
         visibleAction.triggered.connect(self._widget._handleVisibleButtonClick)
 
 class RefLayer(K.DockWidget):
