@@ -141,6 +141,14 @@ def loadImageToNode(image: K.QImage, node: K.Node) -> None:
     imageData = image.constBits().asstring(size)
     node.setPixelData(imageData, 0, 0, w, h)
 
+def clearNode(node: K.Node) -> None:
+    rect = node.bounds()
+    w = rect.width()
+    h = rect.height()
+    size = 4*w*h
+    node.setPixelData(bytes(size), rect.x(), rect.y(), w, h)
+    node.move(0, 0)
+
 validImageExt = set(
     '.' + fmt.data().decode('utf-8')
     for fmt in K.QImageReader.supportedImageFormats()
@@ -217,7 +225,9 @@ class LayerState:
                 self.doc.refreshProjection()
                 return
         image = K.QImage(str(self.path))
-        node = self.doc.createNode(self.node.name(), 'paintlayer')
+        # node = self.doc.createNode(self.node.name(), 'paintlayer')
+        node = self.node
+        clearNode(node)
         loadImageToNode(image, node)
         bounds = K.QRect(node.bounds())
         transform = self._getTransform(bounds)
@@ -244,21 +254,21 @@ class LayerState:
 
     def _applyTransform(self, node: K.Node, transform: TransformParams) -> None:
         # Node needs to have a parent to be scaled.
-        node.setVisible(False)
-        parent = self.node.parentNode()
-        if parent:
-            # Add child node changes the active node so it needs to be saved.
-            # Bug: https://bugs.kde.org/show_bug.cgi?id=495811
-            activeNode = self.doc.activeNode()
-            parent.addChildNode(node, self.node)
-            if activeNode != self.node:
-                self.doc.setActiveNode(activeNode)
+        # node.setVisible(False)
+        # parent = self.node.parentNode()
+        # if parent:
+        #     # Add child node changes the active node so it needs to be saved.
+        #     # Bug: https://bugs.kde.org/show_bug.cgi?id=495811
+        #     activeNode = self.doc.activeNode()
+        #     parent.addChildNode(node, self.node)
+        #     if activeNode != self.node:
+        #         self.doc.setActiveNode(activeNode)
         t = transform
         node.scaleNode(K.QPointF(t.x0, t.y0), int(t.w), int(t.h), 'Bicubic')
         node.move(int(t.dx-t.x0), int(t.dy-t.y0))
-        node.setVisible(self.node.visible())
-        self.node.remove()
-        self.node = node
+        # node.setVisible(self.node.visible())
+        # self.node.remove()
+        # self.node = node
         self.currentScale = t.s
 
     def index(self) -> Tuple:
