@@ -1,3 +1,5 @@
+# TODO: Image viewer for positioning, scaling, and cropping. Maybe margins too.
+# TODO: Make sure to refocus when switching dialogs.
 import json
 import random
 from dataclasses import dataclass, field
@@ -158,7 +160,7 @@ validImageExt.discard('.kra')
 def getImagePaths(pathDir: Path) -> List[Path]:
     paths = [
         path for path in pathDir.iterdir()
-        if path.suffix in validImageExt
+        if path.suffix.lower() in validImageExt
     ]
     return paths
 
@@ -604,7 +606,6 @@ class RefLayerWidget(K.QWidget):
         for layer in layers:
             name = layer.node.name()
             i = len(name) - 1
-            num = 0
             while name[i].isdigit() and i >= 0:
                 i -= 1
             if i + 1 < len(name):
